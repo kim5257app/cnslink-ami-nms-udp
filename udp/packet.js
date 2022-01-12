@@ -1,37 +1,7 @@
 const db = require('../db/index');
-const aftQuery = require('../db/query/aft');
+const nmsQuery = require('../db/query/nms');
 const logger = require('../debug/logger');
 const Error = require('../debug/error');
-
-const INT32MAX = 2 ** 32 - 1;
-
-const MsgID = Object.freeze({
-  MSG_ID_GET_NEW_MAC_ADDR: 0,
-  MSG_ID_INSERT_RECORD: 1,
-  MSG_ID_READ_RECORD: 2,
-  MSG_ID_DEL_LAST_RECORD: 3,
-  MSG_ID_CREATE_CSV_FILE: 4,
-  MSG_ID_MODIFY_RECORD: 5,
-  MSG_ID_DEL_RECORD_RECOVERY: 6,
-  MSG_ID_LOGIN: 7,
-  MSG_ID_GET_SERIAL: 8,
-  MSG_ID_GET_CURRENT: 9,
-  MSG_ID_SET_CURRENT: 10,
-  MSG_ID_DELETE_SERIAL: 11,
-  MSG_ID_UPDATE_SERIAL: 12,
-  MSG_ID_GET_IMEI: 13,
-});
-
-const MsgResp = Object.freeze({
-  DB_OK: 0,
-  DB_ERROR: 1,
-  DB_SOCKET_ERR: 2,
-  DB_MAC1_ERR: 3,
-  DB_IMEI_ERR: 4,
-  DB_SERIALNO_ERR: 5,
-  DB_NBIOT_SN_ERR: 6,
-  DB_USIM_SN_ERR: 7,
-});
 
 /**
  * @param {Buffer} buffer
@@ -39,19 +9,7 @@ const MsgResp = Object.freeze({
  * @param {number} end
  */
 function bufToStr(buffer, start, end) {
-  const result = Buffer.alloc(end - start + 1);
-  let offset = 0;
-
-  for (let idx = start; idx < end; idx += 1) {
-    if (buffer[idx] === 0) {
-      break;
-    }
-
-    result[offset] = buffer[idx];
-    offset += 1;
-  }
-
-  return result.toString('ascii', 0, offset);
+  return buffer.slice(start, end).toString('ascii', 0);
 }
 
 /**
@@ -74,15 +32,15 @@ function bufToFloat(buffer, start, end) {
 }
 
 /**
- * @param {{id: number, ack: number}} resp
+ * @param {{cmd: string, data: string}} resp
  * @param {RemoteInfo} rinfo
  * @param {Socket} socket
  */
 function response(resp, rinfo, socket) {
-  const payload = Buffer.alloc(8);
+  const payload = Buffer.alloc(data.length + 1);
 
-  payload.writeUInt32LE(resp.id, 0);
-  payload.writeUInt32LE(resp.ack, 4);
+  payload.write(resp.cmd, 0, 'ascii');
+  payload.write(resp.data, 1, 'ascii');
 
   socket.send(payload, rinfo.port, rinfo.address, (error) => {
     if (error != null) {
@@ -95,72 +53,111 @@ function response(resp, rinfo, socket) {
  * @param {Buffer} msg
  */
 function parsePacket(msg) {
-  const id = msg.readUInt32LE(0);
-  const ack = msg.readUInt32LE(4);
-  const data = (msg.length > 8)
-    ? msg.slice(8, msg.length)
-    : null;
+  let offset = 0;
 
-  return {
-    id,
-    ack,
-    data,
-  };
+  const cmd = bufToStr(msg, offset, (offset += 1));
+  const ctn = bufToStr(msg, offset, (offset += 8));
+  const data = bufToStr(msg, offset, msg.length);
+
+  return { cmd, ctn, data };
 }
 
 /**
- * @param {number} id
- * @param {number} ack
- * @param {Buffer} data
+ * @param {string} cmd
+ * @param {string} ctn
+ * @param {string} data
  */
-async function insertRecord(id, ack, data) {
+async function insertStatus(cmd, ctn, data) {
   try {
     let offset = 0;
 
     const info = {
-      date: bufToStr(data, offset, (offset += 7)),
-      time: bufToStr(data, offset, (offset += 7)),
-      model: bufToStr(data, offset, (offset += 32)),
-      serial: bufToStr(data, offset, (offset += 11)),
-      firmware: bufToStr(data, offset, (offset += 32)),
-      nbiotModel: bufToStr(data, offset, (offset += 32)),
-      nbiotIMEI: bufToStr(data, offset, (offset += 16)),
-      nbiotSerial: bufToStr(data, offset, (offset += 32)),
-      nbiotFirmware: bufToStr(data, offset, (offset += 32)),
-      nbiotRSRP: bufToFloat(data, offset, (offset += 7)),
-      nbiotRSRQ: bufToFloat(data, offset, (offset += 7)),
-      nbiotRSSI: bufToFloat(data, offset, (offset += 7)),
-      nbiotTxPower: bufToFloat(data, offset, (offset += 7)),
-      usim: bufToStr(data, offset, (offset += 32)),
-      ssim: bufToStr(data, offset, (offset += 32)),
-      result: bufToStr(data, offset, (offset += 64)),
-      memo: bufToStr(data, offset, (offset + 128)),
-      serviceCode: bufToStr(data, offset, (offset + 5)),
+      ssimFailure: data.slice(offset, (offset += 1)),
+      ssimExist: data.slice(offset, (offset += 1)),
+      gasLeak: data.slice(offset, (offset += 1)),
+      gasLowPressure: data.slice(offset, (offset += 1)),
+      lowPower: data.slice(offset, (offset += 1)),
+      gasOverflow: data.slice(offset, (offset += 1)),
+      gasUnused: data.slice(offset, (offset += 1)),
+      gasBackflow: data.slice(offset, (offset += 1)),
+      errorState3: data.slice(offset, (offset += 1)),
+      errorState2: data.slice(offset, (offset += 1)),
+      errorState1: data.slice(offset, (offset += 1)),
+      errorState0: data.slice(offset, (offset += 1)),
+      kmsState: data.slice(offset, (offset += 2)),
+      count: data.slice(offset, (offset + 3)),
     };
 
     logger.info(`insert info: ${data.length} ${JSON.stringify(info)}`);
 
-    // 데이터 중복 검사
-    const checkResult = await db.getInstance().query(aftQuery.checkDuplicate(info));
-
-    let respAck = 0;
-
-    respAck = (checkResult.dupUsim) ? MsgResp.DB_USIM_SN_ERR : respAck;
-    respAck = (checkResult.dupNbiotIMEI) ? MsgResp.DB_IMEI_ERR : respAck;
-    respAck = (checkResult.dupNbiotSerial) ? MsgResp.DB_NBIOT_SN_ERR : respAck;
-    respAck = (checkResult.dupSerial) ? MsgResp.DB_SERIALNO_ERR : respAck;
-
-    if (respAck > 0) {
-      Error.throwFail('ERR_DUPLICATED', 'Duplicated value', respAck);
-    }
-
-    // DB에 데이터 넣기
-    await db.getInstance().query(aftQuery.insertProduction(info));
+    // 상태 정보 추가
+    await db.getInstance().query(nmsQuery.insertStatus(info));
   } catch (error) {
     // eslint-disable-next-line no-throw-literal
     throw {
       ...error,
-      id,
+    };
+  }
+}
+
+/**
+ * @param {string} cmd
+ * @param {string} ctn
+ * @param {string} data
+ * @param {RemoteInfo} rinfo
+ * @param {Socket} socket
+ */
+async function sendCommand({
+  cmd,
+  ctn,
+  data,
+  rinfo,
+  socket,
+}) {
+  try {
+    // CTN에 해당하는 명령 조회
+    const command = await db.getInstance()
+      .sql(nmsQuery.getCommand({ ctn }));
+
+    if (command != null) {
+      // 명령 전송
+      response(command, rinfo, socket);
+
+      await db.getInstance()
+        .sql(nmsQuery.updateCommandStatus({ status: 1 }));
+    } else {
+      // ACK로 마무리
+      response({ cmd: 'A', data: '' }, rinfo, socket);
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-throw-literal
+    throw {
+      ...error,
+    };
+  }
+}
+
+async function respondCommand({
+  ctn,
+  rinfo,
+  socket,
+}) {
+  try {
+    // CTN에 해당하는 명령 조회
+    const command = await db.getInstance()
+      .sql(nmsQuery.getCommand({ ctn }));
+
+    if (command != null) {
+      // 명령 전송
+      response(command, rinfo, socket);
+
+      await db.getInstance()
+        .sql(nmsQuery.updateCommandStatus({ status: 1 }));
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-throw-literal
+    throw {
+      ...error,
     };
   }
 }
@@ -172,27 +169,23 @@ async function insertRecord(id, ack, data) {
  */
 async function packetHandler(msg, rinfo, socket) {
   try {
-    const { id, ack, data } = parsePacket(msg);
+    const { cmd, ctn, data } = parsePacket(msg);
 
-    logger.info(`id: ${id}, ack: ${ack}, data: ${data ? data.length : 0}`);
-
-    switch (id) {
-      case MsgID.MSG_ID_INSERT_RECORD:
-        await insertRecord(id, ack, data);
+    switch (cmd) {
+      case 'P':
+        await insertStatus(cmd, ctn, data);
+        await sendCommand({ cmd, ctn, data, rinfo, socket });
+        break;
+      case 'A':
+        await respondCommand({ cmd, ctn, data, rinfo, socket })
         break;
       default:
-        response({ id, ack: INT32MAX }, rinfo, socket);
+        response({ cmd: 'E', data: '' }, rinfo, socket);
         break;
     }
   } catch (error) {
     logger.error(`Error(${error.name}): ${error.message}`);
-
-    const resp = {
-      id: (error.id != null) ? error.id : (INT32MAX),
-      ack: (error.code != null) ? error.code : (INT32MAX),
-    };
-
-    response(resp, rinfo, socket);
+    response({ cmd: 'E', data: `${error.code}` }, rinfo, socket);
   }
 }
 
