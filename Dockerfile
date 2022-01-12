@@ -18,4 +18,4 @@ VOLUME /app/config
 
 ENTRYPOINT ["/bin/sh", "run.sh"]
 
-EXPOSE 20044/udp
+EXPOSE 5003/udp

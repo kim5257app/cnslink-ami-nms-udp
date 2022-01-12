@@ -1,1 +1,1 @@
-docker build --tag cnslink-ami-aft-udp:latest .
+docker build --tag cnslink-ami-nms-udp:latest .
