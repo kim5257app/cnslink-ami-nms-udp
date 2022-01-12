@@ -37,7 +37,7 @@ function bufToFloat(buffer, start, end) {
  * @param {Socket} socket
  */
 function response(resp, rinfo, socket) {
-  const payload = Buffer.alloc(data.length + 1);
+  const payload = Buffer.alloc(resp.data.length + 1);
 
   payload.write(resp.cmd, 0, 'ascii');
   payload.write(resp.data, 1, 'ascii');
@@ -91,7 +91,10 @@ async function insertStatus(cmd, ctn, data) {
     logger.info(`insert info: ${data.length} ${JSON.stringify(info)}`);
 
     // 상태 정보 추가
-    await db.getInstance().query(nmsQuery.insertStatus(info));
+    await db.getInstance().query(nmsQuery.insertStatus({
+      ctn,
+      ...info,
+    }));
   } catch (error) {
     // eslint-disable-next-line no-throw-literal
     throw {
@@ -117,14 +120,14 @@ async function sendCommand({
   try {
     // CTN에 해당하는 명령 조회
     const command = await db.getInstance()
-      .sql(nmsQuery.getCommand({ ctn }));
+      .query(nmsQuery.getCommand({ ctn }));
 
     if (command != null) {
       // 명령 전송
       response(command, rinfo, socket);
 
       await db.getInstance()
-        .sql(nmsQuery.updateCommandStatus({ status: 1 }));
+        .query(nmsQuery.updateCommandStatus({ status: 1, no: command.no }));
     } else {
       // ACK로 마무리
       response({ cmd: 'A', data: '' }, rinfo, socket);
@@ -143,16 +146,20 @@ async function respondCommand({
   socket,
 }) {
   try {
+    // 요청했던 명령에 대해 완료로 업데이트
+    await db.getInstance()
+      .query(nmsQuery.updateCommandStatus({ status: 2, ctn }));
+
     // CTN에 해당하는 명령 조회
     const command = await db.getInstance()
-      .sql(nmsQuery.getCommand({ ctn }));
+      .query(nmsQuery.getCommand({ ctn }));
 
     if (command != null) {
       // 명령 전송
       response(command, rinfo, socket);
 
       await db.getInstance()
-        .sql(nmsQuery.updateCommandStatus({ status: 1 }));
+        .query(nmsQuery.updateCommandStatus({ status: 1, no: command.no }));
     }
   } catch (error) {
     // eslint-disable-next-line no-throw-literal

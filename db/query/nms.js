@@ -22,18 +22,20 @@ module.exports = {
   }),
   getCommand: (args) => ({
     sql:
-      "SELECT `no`, cmd, ctn, `data`, done, `timestamp`\n" +
+      "SELECT `no`, cmd, ctn, `data`, status, `timestamp`\n" +
       "FROM nms_commands\n" +
-      "WHERE ctn='' AND status=0\n" +
+      "WHERE ctn=:ctn AND status=0\n" +
       "LIMIT 1",
     args,
     done: (result) => ((result.length > 0) ? { ...result[0] } : null),
   }),
   updateCommandStatus: (args) => ({
-    sql:
+    sql: (() => (
       "UPDATE nms_commands\n" +
       "SET status=:status\n" +
-      "WHERE `no`=:no",
+      "WHERE\n" +
+      ((args.no != null) ? "`no`=:no" : "ctn=:ctn AND status=1")
+    ))(),
     args,
   }),
 };
