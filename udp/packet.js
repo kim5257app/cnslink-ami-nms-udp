@@ -56,7 +56,7 @@ function parsePacket(msg) {
   let offset = 0;
 
   const cmd = bufToStr(msg, offset, (offset += 1));
-  const ctn = bufToStr(msg, offset, (offset += 8));
+  const ctn = `012${bufToStr(msg, offset, (offset += 8))}`;
   const data = bufToStr(msg, offset, msg.length);
 
   return { cmd, ctn, data };

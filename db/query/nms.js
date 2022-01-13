@@ -6,11 +6,11 @@ module.exports = {
   insertStatus: (args) => ({
     sql:
       "INSERT INTO `status`(\n" +
-      "  ctn, ssimFailure, ssimExist,\n" +
-      "  gasLeak, gasLowPressure, lowPower,\n" +
-      "  gasOverflow, gasUnused, gasBackflow,\n" +
-      "  errorState3, errorState2, errorState1, errorState0,\n" +
-      "  kmsState, `count`)\n" +
+      "ctn, ssim_failure, ssim_exist,\n" +
+      "gas_leak, gas_low_pressure, low_power,\n" +
+      "gas_overflow, gas_unused, gas_backflow,\n" +
+      "error_state3, error_state2, error_state1, error_state0,\n" +
+      "kms_state, `count`)\n" +
       "VALUES(\n" +
       "  :ctn, :ssimFailure, :ssimExist,\n" +
       "  :gasLeak, :gasLowPressure, :lowPower,\n" +
